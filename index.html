@@ -74,13 +74,20 @@ h2 { font-family: var(--font-display); font-weight: 700; font-size: 1.35rem; tex
 .roster { display: grid; gap: 6px; }
 .prow {
   display: grid; align-items: center; gap: 6px 8px;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas: "here name tools" "here pos abil";
+  grid-template-columns: auto 52px minmax(0, 1fr) auto;
+  grid-template-areas: "here num name tools" "here pos pos abil";
   padding: 8px; border-radius: 8px; background: var(--surface-2); border: 1px solid transparent;
 }
 .prow.out { opacity: .55; }
 .prow.out .name { text-decoration: line-through; }
 .here { grid-area: here; }
+.num { grid-area: num; width: 100%; min-width: 0; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; padding: 4px 6px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: center; }
+.export { display: grid; gap: 10px; padding-top: 14px; border-top: 1px solid var(--line); }
+.export-fields { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); align-items: end; }
+.field { display: grid; gap: 4px; min-width: 0; }
+.field input, .field select { width: 100%; min-width: 0; border: 1px solid var(--line); background: var(--surface); border-radius: 7px; padding: 7px 9px; }
+.export-status { font-size: .85rem; color: var(--muted); }
+.export-status.err { color: var(--warn); }
 .name { grid-area: name; min-width: 0; width: 100%; border: 1px solid transparent; background: transparent; border-radius: 6px; padding: 4px 6px; font-weight: 600; }
 .name:hover, .name:focus { border-color: var(--line); background: var(--surface); }
 .tools { grid-area: tools; display: flex; gap: 2px; }
@@ -209,10 +216,30 @@ td.tot.bad { color: var(--warn); }
         </div>
       </div>
       <div id="rotation"></div>
+      <div class="export" aria-labelledby="export-h">
+        <span class="label" id="export-h">Game sheet PDF</span>
+        <div class="export-fields">
+          <label class="field"><span class="label">Sheet title</span><input id="sheet-title"></label>
+          <label class="field"><span class="label">Team name</span><input id="team-name" placeholder="Team name"></label>
+          <label class="field"><span class="label">Date</span><input id="game-date" type="date"></label>
+          <label class="field"><span class="label">Mark players with</span>
+            <select id="mark-style">
+              <option value="pwf">Position (P, W, F)</option>
+              <option value="num">Position (1–5)</option>
+              <option value="x">X</option>
+            </select>
+          </label>
+        </div>
+        <div class="btn-row">
+          <button class="btn primary" id="export-pdf" type="button">Export PDF</button>
+          <span class="export-status" id="export-status" aria-live="polite"></span>
+        </div>
+      </div>
     </section>
   </div>
 </div>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script>
 (() => {
   const PERIODS = 6, ON = 5;
@@ -410,6 +437,7 @@ td.tot.bad { color: var(--warn); }
     el.innerHTML = state.players.map((p, i) => `
       <div class="prow ${p.present ? '' : 'out'}" data-id="${p.id}">
         <input class="toggle here" type="checkbox" id="here-${p.id}" ${p.present ? 'checked' : ''} aria-label="${esc(p.name || 'Player')} is at the game">
+        <input class="num" id="num-${p.id}" value="${esc(p.num || '')}" placeholder="#" inputmode="numeric" maxlength="3" aria-label="Jersey number">
         <input class="name" id="name-${p.id}" value="${esc(p.name)}" placeholder="Player name" aria-label="Name">
         <div class="tools">
           <button class="icon-btn" data-act="up" type="button" aria-label="Move up" ${i === 0 ? 'disabled' : ''}>▲</button>
@@ -534,9 +562,149 @@ td.tot.bad { color: var(--warn); }
     p.present = e.target.checked; touched(); save(); render();
   });
   $('#roster').addEventListener('input', e => {
-    if (!e.target.classList.contains('name')) return;
+    const isName = e.target.classList.contains('name'), isNum = e.target.classList.contains('num');
+    if (!isName && !isNum) return;
     const p = byId(e.target.closest('.prow').dataset.id);
-    p.name = e.target.value; touched(); save(); renderRotation();
+    if (isName) p.name = e.target.value; else p.num = e.target.value.trim();
+    touched(); save(); renderRotation();
+  });
+
+  // ---------- game sheet PDF ----------
+  function todayISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  state.sheet = Object.assign({ title: 'Upward Basketball 2025/ 2026', team: '', date: todayISO(), mark: 'pwf' }, state.sheet || {});
+  const sheetInputs = { title: '#sheet-title', team: '#team-name', date: '#game-date', mark: '#mark-style' };
+  Object.entries(sheetInputs).forEach(([k, sel]) => {
+    const el = $(sel);
+    el.value = state.sheet[k];
+    el.addEventListener('input', () => { state.sheet[k] = el.value; save(); });
+  });
+
+  function fmtDate(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+    return m ? `${+m[2]}/${+m[3]}/${m[1]}` : '';
+  }
+
+  function sheetMarks(rows) {
+    const marks = {}; rows.forEach(p => { marks[p.id] = Array(PERIODS).fill(''); });
+    for (let k = 0; k < PERIODS; k++) {
+      const info = periodInfo(k, rows);
+      sortedOn(info).forEach((p, i) => {
+        const slot = info.slotOf[p.id];
+        marks[p.id][k] = state.sheet.mark === 'x' ? 'X'
+          : state.sheet.mark === 'num' ? String(i + 1)
+          : ({ PG: 'P', SG: 'W', F: 'F' })[slot];
+      });
+    }
+    return marks;
+  }
+
+  function buildPdf() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'letter' });
+    const rows = state.plan.ids.map(byId).filter(Boolean).sort((a, b) => rosterIndex(a.id) - rosterIndex(b.id));
+    const marks = sheetMarks(rows);
+    const black = () => { doc.setTextColor(0, 0, 0); doc.setDrawColor(0, 0, 0); };
+    black();
+
+    // Title + header fields
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
+    doc.text(state.sheet.title || '', 306, 42, { align: 'center' });
+    doc.setFontSize(11.5);
+    doc.text('Team Name:', 55, 70);
+    doc.text('Date:', 55, 98);
+    doc.setLineWidth(0.8);
+    doc.line(130, 73, 300, 73);
+    doc.line(89, 101, 219, 101);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(12);
+    if (state.sheet.team) doc.text(doc.splitTextToSize(state.sheet.team, 166)[0], 134, 69);
+    const dateTxt = fmtDate(state.sheet.date);
+    if (dateTxt) doc.text(dateTxt, 93, 97);
+
+    // Table
+    const X = [53, 197, 249, 301, 352, 404, 456, 508, 560];
+    const HALF = 4; // column index of the halftime column (between periods 3 and 4)
+    const top = 124, headH = 23;
+    const nRows = Math.max(10, rows.length);
+    const rowH = nRows > 12 ? Math.max(16, 276 / nRows) : 23;
+    const bottom = top + headH + rowH * nRows;
+    doc.setLineWidth(0.6);
+    doc.rect(X[0], top, X[X.length - 1] - X[0], bottom - top);
+    X.slice(1, -1).forEach(x => doc.line(x, top, x, bottom));
+    doc.line(X[0], top + headH, X[X.length - 1], top + headH);
+    for (let r = 1; r < nRows; r++) {
+      const y = top + headH + rowH * r;
+      doc.line(X[0], y, X[HALF], y);
+      doc.line(X[HALF + 1], y, X[X.length - 1], y);
+    }
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+    doc.text('Player name / #', X[0] + 3, top + headH / 2 + 5);
+    const periodCols = [1, 2, 3, 5, 6, 7]; // column index for periods 1..6
+    periodCols.forEach((c, k) => doc.text(String(k + 1), (X[c] + X[c + 1]) / 2, top + headH / 2 + 5, { align: 'center' }));
+    const halfLetters = ['H', 'A', 'L', 'F', '', 'T', 'I', 'M', 'E'];
+    const letterStep = Math.min(rowH, (bottom - top - headH) / 10);
+    halfLetters.forEach((ch, i) => {
+      if (ch) doc.text(ch, (X[HALF] + X[HALF + 1]) / 2, top + headH + letterStep * i + letterStep / 2 + 5, { align: 'center' });
+    });
+
+    rows.forEach((p, r) => {
+      const yMid = top + headH + rowH * r + rowH / 2;
+      const label = (p.name || 'Player') + (p.num ? `  #${p.num}` : '');
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(rowH < 20 ? 10 : 11.5);
+      doc.text(doc.splitTextToSize(label, X[1] - X[0] - 8)[0], X[0] + 4, yMid + 4);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(rowH < 20 ? 10 : 12);
+      marks[p.id].forEach((m, k) => {
+        if (!m) return;
+        const c = periodCols[k];
+        doc.text(m, (X[c] + X[c + 1]) / 2, yMid + 4, { align: 'center' });
+      });
+    });
+
+    // Guide
+    const g = Math.max(412, bottom + 30) - 412;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(11.5);
+    doc.text('Guide:', 55, 412 + g);
+    doc.setFont('helvetica', 'normal');
+    const guide = [
+      [200, 430, '10 players- 3 periods each player'],
+      [200, 458, '9 players- 3 players play 4 periods'], [257, 475, '6 players play 3 periods'],
+      [200, 503, '8 players- 6 players play 4 periods'], [257, 521, '2 players play 3 periods'],
+      [200, 549, '7 players- 2 players play 5 periods'], [257, 566, '5 players play 4 periods'],
+      [200, 594, '6 players- 6 players play 5 periods'],
+      [83, 622, '* Mark each player by either an X or a position (P,W,F or 1,2,3,4,5)'],
+    ];
+    guide.forEach(([x, y, t]) => doc.text(t, x, y + g));
+    return doc;
+  }
+
+  $('#export-pdf').addEventListener('click', async () => {
+    const status = $('#export-status');
+    const say = (t, err) => { status.textContent = t; status.classList.toggle('err', !!err); };
+    if (!state.plan) { say('Build a rotation first.', true); return; }
+    if (!window.jspdf) { say('The PDF tool didn\'t load. Check your internet connection and reload the page.', true); return; }
+    const doc = buildPdf();
+    const base = [state.sheet.team || 'Lineup', state.sheet.date].filter(Boolean).join(' ')
+      .replace(/[\\/:*?"<>|]+/g, '-').trim() || 'Lineup';
+    const filename = base + '.pdf';
+    let downloads = null;
+    if (window.claude && typeof window.claude.use === 'function') {
+      try { downloads = await window.claude.use('downloads'); } catch (e) { downloads = null; }
+    }
+    if (downloads) {
+      try {
+        await downloads.save({ filename, data: doc.output('blob') });
+        say('PDF saved.');
+      } catch (e) {
+        if (e && e.code === 'declined') say('Export canceled.');
+        else if (e && e.code === 'rate_limited') say('A save prompt is already open. Finish it, then try again.', true);
+        else say('This view can\'t save files. Open the page in a browser to export.', true);
+      }
+    } else {
+      doc.save(filename);
+      say('PDF downloaded.');
+    }
   });
   $('#add-player').addEventListener('click', () => {
     const p = { id: uid(), name: '', pos: 'SG', abil: 'B', present: true };
