@@ -1,0 +1,11 @@
+{
+  "name": "betbook",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Sports betting tracker and odds calculators. Runs in the browser, no server.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "start": "python3 -m http.server 8000"
+  }
+}

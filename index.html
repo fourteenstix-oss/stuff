@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Betbook</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Betbook</h1>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="tracker" aria-selected="true">Tracker</button>
+      <button role="tab" data-tab="calc">Calculators</button>
+      <button role="tab" data-tab="settings">Bankroll &amp; limits</button>
+    </nav>
+  </header>
+
+  <main>
+    <div id="limit-banner" class="banner" hidden></div>
+
+    <!-- TRACKER -->
+    <section id="tab-tracker" class="tab">
+      <div class="stats" id="stats"></div>
+
+      <div class="card">
+        <h2>Bankroll over time</h2>
+        <div id="chart" class="chart"></div>
+      </div>
+
+      <form id="bet-form" class="card grid-form">
+        <h2>Log a bet</h2>
+        <label>Date <input name="date" type="date" required></label>
+        <label>Sport <input name="sport" list="sports" placeholder="NFL"></label>
+        <label class="wide">Event <input name="event" placeholder="Chiefs @ Bills" required></label>
+        <label class="wide">Pick <input name="pick" placeholder="Bills +2.5" required></label>
+        <label>Market
+          <select name="market">
+            <option>Spread</option><option>Moneyline</option><option>Total</option>
+            <option>Prop</option><option>Parlay</option><option>Future</option><option>Other</option>
+          </select>
+        </label>
+        <label>Odds <input name="odds" placeholder="-110, 2.5 or 5/2" required></label>
+        <label>Stake <input name="stake" type="number" min="0.01" step="0.01" required></label>
+        <label>Book <input name="book" list="books" placeholder="Sportsbook"></label>
+        <label>Closing odds <input name="closing" placeholder="optional, for CLV"></label>
+        <label>Result
+          <select name="status">
+            <option value="pending">Pending</option><option value="won">Won</option>
+            <option value="lost">Lost</option><option value="push">Push</option>
+            <option value="half-won">Half won</option><option value="half-lost">Half lost</option>
+            <option value="void">Void</option>
+          </select>
+        </label>
+        <p class="hint wide" id="form-preview"></p>
+        <div class="wide actions">
+          <button type="submit" class="primary" id="save-btn">Add bet</button>
+          <button type="button" id="cancel-edit" hidden>Cancel edit</button>
+        </div>
+        <datalist id="sports"></datalist>
+        <datalist id="books"></datalist>
+      </form>
+
+      <div class="card">
+        <div class="row-between">
+          <h2>Bets</h2>
+          <div class="filters">
+            <select id="filter-status" aria-label="Filter by result">
+              <option value="">All results</option><option value="pending">Pending</option>
+              <option value="settled">Settled</option>
+            </select>
+            <select id="filter-sport" aria-label="Filter by sport"><option value="">All sports</option></select>
+            <input id="filter-text" type="search" placeholder="Search" aria-label="Search bets">
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table id="bets-table">
+            <thead><tr>
+              <th>Date</th><th>Event / pick</th><th>Odds</th><th>Stake</th>
+              <th>Result</th><th class="num">P/L</th><th class="num">CLV</th><th></th>
+            </tr></thead>
+            <tbody></tbody>
+          </table>
+          <p id="empty" class="hint">No bets yet. Log one above.</p>
+        </div>
+        <div class="card-sub">
+          <h3>By sport</h3>
+          <div id="breakdown"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CALCULATORS -->
+    <section id="tab-calc" class="tab" hidden>
+      <div class="calc-grid">
+        <form class="card" id="c-convert">
+          <h2>Odds converter</h2>
+          <label>Odds (any format) <input name="odds" value="-110"></label>
+          <output></output>
+        </form>
+
+        <form class="card" id="c-novig">
+          <h2>No-vig fair odds</h2>
+          <p class="hint">Enter every outcome of one market (one per line) to strip the book's margin.</p>
+          <label>Odds <textarea name="odds" rows="3">-110
+-110</textarea></label>
+          <output></output>
+        </form>
+
+        <form class="card" id="c-ev">
+          <h2>Expected value &amp; Kelly</h2>
+          <label>Odds offered <input name="odds" value="+120"></label>
+          <label>Your win probability % <input name="prob" type="number" step="0.1" value="48"></label>
+          <label>Bankroll <input name="bankroll" type="number" step="1" value="1000"></label>
+          <label>Kelly multiplier
+            <select name="mult"><option value="1">Full</option><option value="0.5">Half</option>
+            <option value="0.25" selected>Quarter</option><option value="0.1">Tenth</option></select>
+          </label>
+          <output></output>
+        </form>
+
+        <form class="card" id="c-parlay">
+          <h2>Parlay</h2>
+          <label>Leg odds, one per line <textarea name="odds" rows="3">-110
+-110
++150</textarea></label>
+          <label>Stake <input name="stake" type="number" step="0.01" value="10"></label>
+          <output></output>
+        </form>
+
+        <form class="card" id="c-arb">
+          <h2>Arbitrage / hedge</h2>
+          <p class="hint">Best price for each outcome (one per line), across books.</p>
+          <label>Odds <textarea name="odds" rows="3">+105
++102</textarea></label>
+          <label>Total stake <input name="stake" type="number" step="0.01" value="100"></label>
+          <output></output>
+        </form>
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section id="tab-settings" class="tab" hidden>
+      <form class="card grid-form" id="settings-form">
+        <h2>Bankroll</h2>
+        <label>Starting bankroll <input name="bankroll" type="number" step="0.01" min="0"></label>
+        <label>Unit size <input name="unit" type="number" step="0.01" min="0"></label>
+        <label>Currency symbol <input name="currency" maxlength="3"></label>
+        <h2 class="wide">Limits</h2>
+        <p class="hint wide">Betbook warns you when you get close to or pass these. Leave blank to turn one off.</p>
+        <label>Monthly loss limit <input name="lossLimit" type="number" step="0.01" min="0"></label>
+        <label>Max stake per bet <input name="maxStake" type="number" step="0.01" min="0"></label>
+        <div class="wide actions"><button type="submit" class="primary">Save</button></div>
+      </form>
+
+      <div class="card">
+        <h2>Your data</h2>
+        <p class="hint">Bets are stored only in this browser. Export a backup now and then.</p>
+        <div class="actions">
+          <button id="export-json">Export JSON</button>
+          <button id="export-csv">Export CSV</button>
+          <label class="button">Import JSON <input id="import-json" type="file" accept="application/json" hidden></label>
+          <button id="clear-all" class="danger">Delete all bets</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Play responsibly</h2>
+        <p>Books build a margin into every price, so most bettors lose over time. Bet only money you can afford to lose,
+          and stop if it stops being fun. In the US you can call or text <strong>1-800-GAMBLER</strong> for free, confidential help.</p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
