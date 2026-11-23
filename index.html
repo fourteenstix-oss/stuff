@@ -190,7 +190,8 @@ td.tot.bad { color: var(--warn); }
         <h2 id="roster-h">Roster</h2>
         <span class="count" id="present-count"></span>
       </div>
-      <p class="hint" id="sample-hint" hidden>Sample players are loaded. Rename them, set positions and grades, and your changes are saved in this browser.</p>
+      <p class="hint" id="sample-hint" hidden>Sample players are loaded. Rename them, set positions and grades. Changes save automatically.</p>
+      <p class="hint" id="save-status" aria-live="polite"></p>
       <div class="roster" id="roster"></div>
       <div class="btn-row">
         <button class="btn small" id="add-player" type="button">+ Add player</button>
@@ -294,7 +295,36 @@ td.tot.bad { color: var(--warn); }
   let state;
   try { state = JSON.parse(localStorage.getItem(KEY)); } catch (e) { state = null; }
   if (!state || !Array.isArray(state.players)) state = sampleState();
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} }
+  // Saving: always to this browser; also to the viewer's private Claude storage when available,
+  // so the roster follows them across devices and apps.
+  const remote = { doc: null, ready: false, writing: false, pending: false, timer: null };
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+    if (remote.ready) { clearTimeout(remote.timer); remote.timer = setTimeout(pushRemote, 600); }
+  }
+  async function pushRemote() {
+    if (!remote.ready) return;
+    if (remote.writing) { remote.pending = true; return; }
+    remote.writing = true;
+    try {
+      await remote.doc.set({ json: JSON.stringify(state), savedAt: new Date().toISOString() });
+      setSaveStatus('account');
+    } catch (e) {
+      if (e && (e.code === 'invalid_argument' || e.code === 'not_granted' || e.code === 'revoked' || e.code === 'capability_disabled')) {
+        remote.ready = false; setSaveStatus('local');
+      }
+    } finally {
+      remote.writing = false;
+      if (remote.pending && remote.ready) { remote.pending = false; pushRemote(); }
+    }
+  }
+  function setSaveStatus(where) {
+    const el = document.getElementById('save-status'); if (!el) return;
+    el.textContent = where === 'account'
+      ? 'Your roster is saved to your Claude account and shows up wherever you open this page.'
+      : where === 'loading' ? 'Loading your saved roster…'
+      : 'Your roster is saved in this browser only. Opening the page somewhere else starts fresh.';
+  }
 
   let selected = null; // {id, k}
   let message = '';
@@ -574,11 +604,14 @@ td.tot.bad { color: var(--warn); }
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
-  state.sheet = Object.assign({ title: 'Upward Basketball 2025/ 2026', team: '', date: todayISO(), mark: 'pwf' }, state.sheet || {});
   const sheetInputs = { title: '#sheet-title', team: '#team-name', date: '#game-date', mark: '#mark-style' };
+  function syncSheet() {
+    state.sheet = Object.assign({ title: 'Upward Basketball 2025/ 2026', team: '', date: todayISO(), mark: 'pwf' }, state.sheet || {});
+    Object.entries(sheetInputs).forEach(([k, sel]) => { $(sel).value = state.sheet[k]; });
+  }
+  syncSheet();
   Object.entries(sheetInputs).forEach(([k, sel]) => {
     const el = $(sel);
-    el.value = state.sheet[k];
     el.addEventListener('input', () => { state.sheet[k] = el.value; save(); });
   });
 
@@ -744,5 +777,39 @@ td.tot.bad { color: var(--warn); }
 
   render();
   if (!state.plan) build(false);
+  setSaveStatus('local');
+
+  // Load the roster saved to the viewer's Claude account, if this page is running inside Claude.
+  (async () => {
+    if (!window.claude || typeof window.claude.use !== 'function') return;
+    setSaveStatus('loading');
+    let db = null, user = null, uid = null;
+    try { [db, user] = await Promise.all([window.claude.use('db'), window.claude.use('user')]); } catch (e) {}
+    try { uid = user ? await user.id() : null; } catch (e) { uid = null; }
+    if (!db || !uid) { setSaveStatus('local'); return; }
+    try {
+      remote.doc = db.doc('data/users/' + uid + '/board');
+      let snap;
+      try { snap = await remote.doc.get(); }
+      catch (e) {
+        if (e && e.code === 'unavailable') { await new Promise(r => setTimeout(r, 800 + Math.random() * 800)); snap = await remote.doc.get(); }
+        else throw e;
+      }
+      let saved = null;
+      if (snap.exists) { try { saved = JSON.parse(snap.data().json); } catch (e) { saved = null; } }
+      remote.ready = true;
+      if (saved && Array.isArray(saved.players)) {
+        state = saved; selected = null; message = '';
+        try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+        syncSheet(); render();
+        if (!state.plan && present().length >= ON) build(false);
+        setSaveStatus('account');
+      } else {
+        await pushRemote(); // first visit with account storage: keep what's in this browser
+      }
+    } catch (e) {
+      remote.ready = false; setSaveStatus('local');
+    }
+  })();
 })();
 </script>

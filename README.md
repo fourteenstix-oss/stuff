@@ -2,7 +2,7 @@
 
 A single-page web app for building basketball rotations: 6 periods, 5 on the floor, equal playing time, and your best five closing out the 6th period.
 
-Open `index.html` in any browser (no install, no server). Your roster is saved in that browser's local storage.
+Open `index.html` in any browser (no install, no server). Opened as a file, your roster is saved in that browser only. On the published Claude page, it is also saved privately to your Claude account, so it follows you across devices.
 
 ## How it works
 
